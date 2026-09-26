@@ -4,7 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="robots" content="noindex, nofollow">
 <title>Time Clock</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
@@ -34,6 +36,8 @@
   .msg { padding:12px; border-radius:8px; margin-top:10px; font-size:14px; }
   .msg.ok { background:#ecfdf5; color:#065f46; } .msg.bad { background:#fef2f2; color:var(--err); } .msg.info { background:#eff6ff; color:#1e40af; }
   #preview { width:100%; border-radius:10px; margin-top:6px; }
+  #liveVideo { width:100%; border-radius:10px; margin-top:6px; background:#000; transform:scaleX(-1); height:46vh; object-fit:cover; display:block; }
+  #liveCard { scroll-margin-top:60px; }
   table { width:100%; border-collapse:collapse; font-size:14px; }
   th, td { text-align:left; padding:9px 6px; border-bottom:1px solid var(--line); }
   th { font-size:12px; color:var(--muted); text-transform:uppercase; }
@@ -52,14 +56,36 @@
   <h1>Time Clock</h1>
   <p id="headerName">Photo-verified attendance records</p>
 </header>
-<nav>
+<!-- SIGN IN (shown only when not signed in on this device) -->
+<section id="authScreen" class="hidden">
+  <main>
+    <div class="card">
+      <h2 id="authTitle">Sign in</h2>
+      <p class="small" id="authIntro">Sign in once on this phone and it will stay signed in. Scanning the QR code will then go straight to the Clock screen.</p>
+      <div id="authForm">
+        <label>Email</label><input id="authEmail" type="email" autocomplete="username" autocapitalize="off" autocorrect="off">
+        <label>Password</label><input id="authPass" type="password" autocomplete="current-password">
+        <button class="btn" id="btnSignIn">Sign in</button>
+        <button class="btn ghost" id="btnSignUp">Create my account (first time only)</button>
+        <p style="margin-top:14px;text-align:center"><button class="linkbtn" id="btnForgot">Forgot password?</button></p>
+      </div>
+      <div id="newPassForm" class="hidden">
+        <label>New password (at least 8 characters)</label><input id="newPass" type="password" autocomplete="new-password">
+        <button class="btn" id="btnSetPass">Save new password</button>
+      </div>
+      <div id="authMsg"></div>
+    </div>
+  </main>
+</section>
+
+<nav id="appNav" class="hidden">
   <button data-tab="clock" class="active">Clock</button>
   <button data-tab="records">Records</button>
   <button data-tab="reports">Reports</button>
   <button data-tab="setup">Setup</button>
 </nav>
 
-<main>
+<main id="appMain" class="hidden">
   <!-- CLOCK -->
   <section id="clock" class="tab active">
     <div class="card">
@@ -68,6 +94,15 @@
       <button class="btn out big" id="btnOut">Clock Out</button>
       <input type="file" id="cameraInput" accept="image/*" capture="user" class="hidden">
       <div id="clockMsg"></div>
+    </div>
+    <div class="card hidden" id="liveCard">
+      <h2 id="liveTitle" style="text-align:center;font-size:20px">Clock In</h2>
+      <video id="liveVideo" autoplay playsinline muted></video>
+      <button class="btn big in" id="btnShutter">Take photo</button>
+      <div class="row" style="margin-top:6px">
+        <button class="linkbtn" id="btnSwitchAction">Switch to Clock Out</button>
+        <button class="linkbtn" id="btnCancelLive" style="text-align:right">Cancel</button>
+      </div>
     </div>
     <div class="card hidden" id="approveCard">
       <h2 id="approveTitle">Check your photo</h2>
@@ -117,6 +152,11 @@
   <!-- SETUP -->
   <section id="setup" class="tab">
     <div class="card">
+      <h2>Account</h2>
+      <p class="small">Signed in as <b id="acctEmail">—</b>. This phone stays signed in until you sign out.</p>
+      <button class="btn ghost" id="btnSignOut">Sign out of this device</button>
+    </div>
+    <div class="card">
       <h2>Connection</h2>
       <label>Supabase Project URL</label><input id="cfgUrl" placeholder="https://xxxxx.supabase.co" autocapitalize="off">
       <label>Supabase anon (public) key</label><input id="cfgKey" type="password" autocapitalize="off">
@@ -162,12 +202,108 @@ function cfg() {
 }
 function isConfigured() { const c = cfg(); return c.supabaseUrl && c.supabaseKey && c.employeeName; }
 
+function baseUrl() { return (cfg().supabaseUrl || '').trim().replace(/\/+$/, '').replace(/\/(rest|storage|auth)\/v1$/, ''); }
+
+/* ---------- sign-in (Supabase Auth; the session is kept on this device) ---------- */
+const IS_RECOVERY_LINK = /type=recovery/.test(location.hash);
+let _sb = null, _sbFor = '';
+function sbClient() {
+  const c = cfg(), key = baseUrl() + '|' + c.supabaseKey;
+  if (!_sb || _sbFor !== key) {
+    _sb = supabase.createClient(baseUrl(), c.supabaseKey, { auth: {
+      persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, storageKey: 'tc_auth' } });
+    _sbFor = key;
+    _sb.auth.onAuthStateChange((event, session) => {
+      if (event === 'PASSWORD_RECOVERY') showAuth('recovery');
+      else if (event === 'SIGNED_OUT') showAuth();
+      else if (event === 'SIGNED_IN' && session && !IS_RECOVERY_LINK && $('appMain').classList.contains('hidden')) showApp();
+    });
+  }
+  return _sb;
+}
+async function currentSession() {
+  const { data } = await sbClient().auth.getSession();
+  return data.session;
+}
+function showAuth(mode) {
+  $('authScreen').classList.remove('hidden');
+  $('appNav').classList.add('hidden'); $('appMain').classList.add('hidden');
+  const rec = mode === 'recovery';
+  $('authForm').classList.toggle('hidden', rec); $('newPassForm').classList.toggle('hidden', !rec);
+  $('authTitle').textContent = rec ? 'Choose a new password' : 'Sign in';
+  $('authIntro').classList.toggle('hidden', rec);
+}
+async function showApp() {
+  $('authScreen').classList.add('hidden');
+  $('appNav').classList.remove('hidden'); $('appMain').classList.remove('hidden');
+  if (location.hash.includes('access_token')) history.replaceState(null, '', location.pathname + location.search);
+  const s = await currentSession(); $('acctEmail').textContent = s && s.user ? s.user.email : '—';
+  showTab(isConfigured() ? 'clock' : 'setup');
+  autoClockFromQr();
+}
+/* Opened from the QR code (?clock=1): go straight to the camera.
+   Before 12pm on the phone's clock → Clock In, from 12pm → Clock Out. */
+async function autoClockFromQr() {
+  const params = new URLSearchParams(location.search);
+  if (!params.has('clock') || !isConfigured()) return;
+  params.delete('clock');   // so a page refresh doesn't open the camera again
+  history.replaceState(null, '', location.pathname + (params.toString() ? '?' + params : ''));
+  await refreshStatus();
+  startClock(new Date().getHours() < 12 ? 'clock_in' : 'clock_out');
+}
+function friendlyAuthError(e) {
+  const m = (e && e.message) || String(e);
+  if (/invalid login/i.test(m)) return 'Email or password is not right. Please try again.';
+  if (/not confirmed/i.test(m)) return 'Please confirm your email first — tap the link in the email we sent you.';
+  if (/signups? not allowed|signup.*disabled/i.test(m)) return 'New accounts are switched off for this app. Please sign in with your existing account.';
+  if (/already registered/i.test(m)) return 'An account with this email already exists. Tap "Sign in" instead.';
+  if (/rate limit/i.test(m)) return 'Too many emails sent. Please wait an hour and try again.';
+  return m;
+}
+function appHome() { return location.origin + location.pathname; }
+function authFields() { return { email: $('authEmail').value.trim(), password: $('authPass').value }; }
+$('btnSignIn').onclick = async () => {
+  const f = authFields(); if (!f.email || !f.password) { msg('authMsg', 'Enter your email and password.', 'bad'); return; }
+  msg('authMsg', 'Signing in…');
+  const { error } = await sbClient().auth.signInWithPassword(f);
+  if (error) msg('authMsg', friendlyAuthError(error), 'bad'); else { msg('authMsg', ''); showApp(); }
+};
+$('btnSignUp').onclick = async () => {
+  const f = authFields();
+  if (!f.email) { msg('authMsg', 'Enter your email.', 'bad'); return; }
+  if (f.password.length < 8) { msg('authMsg', 'Choose a password with at least 8 characters.', 'bad'); return; }
+  msg('authMsg', 'Creating account…');
+  const { data, error } = await sbClient().auth.signUp({ ...f, options: { emailRedirectTo: appHome() } });
+  if (error) { msg('authMsg', friendlyAuthError(error), 'bad'); return; }
+  if (data.session) { msg('authMsg', ''); showApp(); }
+  else msg('authMsg', `✓ Account created. We sent an email to <b>${f.email}</b> — tap the confirm link in it, then come back here and tap <b>Sign in</b>.`, 'ok');
+};
+$('btnForgot').onclick = async () => {
+  const email = $('authEmail').value.trim();
+  if (!email) { msg('authMsg', 'Type your email above first, then tap "Forgot password?" again.', 'bad'); return; }
+  const { error } = await sbClient().auth.resetPasswordForEmail(email, { redirectTo: appHome() });
+  if (error) msg('authMsg', friendlyAuthError(error), 'bad');
+  else msg('authMsg', `✓ If that email has an account, a reset link is on its way to <b>${email}</b>.`, 'ok');
+};
+$('btnSetPass').onclick = async () => {
+  const p = $('newPass').value;
+  if (p.length < 8) { msg('authMsg', 'At least 8 characters, please.', 'bad'); return; }
+  const { error } = await sbClient().auth.updateUser({ password: p });
+  if (error) msg('authMsg', friendlyAuthError(error), 'bad');
+  else { msg('authMsg', '✓ Password changed.', 'ok'); showApp(); }
+};
+$('btnSignOut').onclick = async () => {
+  if (!confirm('Sign out of this device? You will need your email and password to sign in again.')) return;
+  await sbClient().auth.signOut(); showAuth();
+};
+
 async function api(path, opts = {}) {
   const c = cfg();
-  const base = c.supabaseUrl.trim().replace(/\/+$/, '').replace(/\/(rest|storage)\/v1$/, '');
-  const res = await fetch(base + path, {
+  const session = await currentSession();
+  if (!session) { showAuth(); throw new Error('Please sign in'); }
+  const res = await fetch(baseUrl() + path, {
     ...opts,
-    headers: { apikey: c.supabaseKey, Authorization: 'Bearer ' + c.supabaseKey, ...(opts.headers || {}) }
+    headers: { apikey: c.supabaseKey, Authorization: 'Bearer ' + session.access_token, ...(opts.headers || {}) }
   });
   if (!res.ok) {
     let t = ''; try { t = await res.text(); } catch (e) {}
@@ -255,22 +391,67 @@ function startClock(action) {
       !confirm(`The last record is already "${label(action)}". Record another ${label(action)} anyway?`)) return;
   state.action = action;
   msg('clockMsg', '');
-  $('cameraInput').value = '';
-  $('cameraInput').click();
+  $('approveCard').classList.add('hidden');
+  openLiveCamera();
 }
 $('btnIn').onclick = () => startClock('clock_in');
 $('btnOut').onclick = () => startClock('clock_out');
-$('btnRetake').onclick = () => { $('cameraInput').value = ''; $('cameraInput').click(); };
+$('btnRetake').onclick = () => { $('approveCard').classList.add('hidden'); state.blob = null; openLiveCamera(); };
+
+/* ---------- live camera (opens on screen; one tap takes the photo) ---------- */
+let liveStream = null;
+function setLiveAction(action) {
+  state.action = action;
+  $('liveTitle').textContent = label(action);
+  $('liveTitle').style.color = action === 'clock_in' ? 'var(--in)' : 'var(--out)';
+  $('btnShutter').className = 'btn big ' + (action === 'clock_in' ? 'in' : 'out');
+  $('btnShutter').textContent = `Take photo — ${label(action)}`;
+  $('btnSwitchAction').textContent = `Switch to ${label(action === 'clock_in' ? 'clock_out' : 'clock_in')}`;
+}
+function stopLiveCamera() {
+  if (liveStream) liveStream.getTracks().forEach(t => t.stop());
+  liveStream = null; $('liveVideo').srcObject = null; $('liveCard').classList.add('hidden');
+}
+function nativeCamera() { $('cameraInput').value = ''; $('cameraInput').click(); }
+async function openLiveCamera() {
+  setLiveAction(state.action);
+  if (state.useNative || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { nativeCamera(); return; }
+  $('liveCard').classList.remove('hidden');
+  $('liveCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  try {
+    if (!liveStream) liveStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 960 } }, audio: false });
+    $('liveVideo').srcObject = liveStream;
+    await $('liveVideo').play().catch(() => {});
+  } catch (e) {
+    // camera permission refused or unavailable → fall back to the phone's normal camera on the next tap
+    stopLiveCamera();
+    msg('clockMsg', `Camera didn't open automatically. Tap <b>${label(state.action)}</b> above to take your photo.`, 'info');
+    state.useNative = true;
+  }
+}
+$('btnShutter').onclick = () => {
+  const v = $('liveVideo');
+  if (!v.videoWidth) { msg('clockMsg', 'Camera is still starting — try again in a second.', 'info'); return; }
+  stampAndPreview(v, v.videoWidth, v.videoHeight);
+  stopLiveCamera();
+};
+$('btnSwitchAction').onclick = () => setLiveAction(state.action === 'clock_in' ? 'clock_out' : 'clock_in');
+$('btnCancelLive').onclick = () => { stopLiveCamera(); state.action = null; };
 
 $('cameraInput').addEventListener('change', async e => {
   const file = e.target.files[0]; if (!file) return;
   const img = new Image();
   img.src = URL.createObjectURL(file);
   await img.decode();
-  const scale = Math.min(1, 1280 / Math.max(img.naturalWidth, img.naturalHeight));
-  const w = Math.round(img.naturalWidth * scale), h = Math.round(img.naturalHeight * scale);
+  stampAndPreview(img, img.naturalWidth, img.naturalHeight);
+});
+
+function stampAndPreview(source, sw, sh) {
+  const scale = Math.min(1, 1280 / Math.max(sw, sh));
+  const w = Math.round(sw * scale), h = Math.round(sh * scale);
   const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
-  const ctx = cv.getContext('2d'); ctx.drawImage(img, 0, 0, w, h);
+  const ctx = cv.getContext('2d'); ctx.drawImage(source, 0, 0, w, h);
   // timestamp stamp on the photo
   const s = syd(new Date()), c = cfg();
   const fs = Math.max(16, Math.round(w / 32));
@@ -286,7 +467,7 @@ $('cameraInput').addEventListener('change', async e => {
     $('approveCard').classList.remove('hidden');
     $('approveCard').scrollIntoView({ behavior: 'smooth' });
   }, 'image/jpeg', 0.8);
-});
+}
 
 $('btnApprove').onclick = async () => {
   if (!state.blob) return;
@@ -468,7 +649,15 @@ $('btnPrintQr').onclick = () => {
 loadSetupForm();
 setRange('month');
 const t0 = todaySyd(); $('recFrom').value = addDays(t0, -6); $('recTo').value = t0;
-if (!isConfigured()) showTab('setup'); else showTab('clock');
+(async () => {
+  if (!cfg().supabaseUrl || !cfg().supabaseKey) {   // not connected to a database yet → Setup only
+    $('appNav').classList.remove('hidden'); $('appMain').classList.remove('hidden'); showTab('setup'); return;
+  }
+  const session = await currentSession();
+  if (IS_RECOVERY_LINK) showAuth('recovery');
+  else if (session) showApp();
+  else showAuth();
+})();
 </script>
 </body>
 </html>
