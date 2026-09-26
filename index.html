@@ -63,8 +63,8 @@
       <h2 id="authTitle">Sign in</h2>
       <p class="small" id="authIntro">Sign in once on this phone and it will stay signed in. Scanning the QR code will then go straight to the Clock screen.</p>
       <div id="authForm">
-        <label>Email</label><input id="authEmail" type="email" autocomplete="username" autocapitalize="off" autocorrect="off">
-        <label>Password</label><input id="authPass" type="password" autocomplete="current-password">
+        <label>Your email address</label><input id="authEmail" placeholder="e.g. name@gmail.com" type="email" autocomplete="username" autocapitalize="off" autocorrect="off">
+        <label>Password</label><input id="authPass" type="password" placeholder="At least 8 characters" autocomplete="current-password">
         <button class="btn" id="btnSignIn">Sign in</button>
         <button class="btn ghost" id="btnSignUp">Create my account (first time only)</button>
         <p style="margin-top:14px;text-align:center"><button class="linkbtn" id="btnForgot">Forgot password?</button></p>
@@ -263,14 +263,14 @@ function friendlyAuthError(e) {
 function appHome() { return location.origin + location.pathname; }
 function authFields() { return { email: $('authEmail').value.trim(), password: $('authPass').value }; }
 $('btnSignIn').onclick = async () => {
-  const f = authFields(); if (!f.email || !f.password) { msg('authMsg', 'Enter your email and password.', 'bad'); return; }
+  const f = authFields(); if (!f.email || !f.password) { msg('authMsg', 'Type your email address and password in the boxes above, then tap Sign in.', 'bad'); return; }
   msg('authMsg', 'Signing in…');
   const { error } = await sbClient().auth.signInWithPassword(f);
   if (error) msg('authMsg', friendlyAuthError(error), 'bad'); else { msg('authMsg', ''); showApp(); }
 };
 $('btnSignUp').onclick = async () => {
   const f = authFields();
-  if (!f.email) { msg('authMsg', 'Enter your email.', 'bad'); return; }
+  if (!f.email) { msg('authMsg', 'First type the email address you want to use for this account in the Email box above, and choose a password.', 'bad'); return; }
   if (f.password.length < 8) { msg('authMsg', 'Choose a password with at least 8 characters.', 'bad'); return; }
   msg('authMsg', 'Creating account…');
   const { data, error } = await sbClient().auth.signUp({ ...f, options: { emailRedirectTo: appHome() } });
