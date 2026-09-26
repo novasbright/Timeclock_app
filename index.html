@@ -444,11 +444,27 @@ async function openLiveCamera() {
   $('liveCard').classList.remove('hidden');
   $('liveCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
   try {
-    if (!liveStream) liveStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 960 } }, audio: false });
-    $('liveVideo').srcObject = liveStream;
-    await $('liveVideo').play().catch(() => {});
+    console.log('[Camera] Opening live camera...');
+    if (!liveStream) {
+      liveStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 960 } }, audio: false });
+      console.log('[Camera] Stream acquired, video tracks:', liveStream.getVideoTracks().length);
+    }
+    const v = $('liveVideo');
+    v.srcObject = liveStream;
+    console.log('[Camera] Waiting for video to load...');
+    await new Promise((resolve) => {
+      const onloadedmetadata = () => {
+        console.log('[Camera] Video loaded:', v.videoWidth, 'x', v.videoHeight);
+        v.removeEventListener('loadedmetadata', onloadedmetadata);
+        resolve();
+      };
+      v.addEventListener('loadedmetadata', onloadedmetadata);
+      setTimeout(resolve, 3000);  // timeout after 3 seconds
+    });
+    await v.play().catch((e) => { console.log('[Camera] Play error:', e.message); });
   } catch (e) {
+    console.log('[Camera] Error:', e.message);
     // camera permission refused or unavailable → fall back to the phone's normal camera on the next tap
     stopLiveCamera();
     msg('clockMsg', `Camera didn't open automatically. Tap <b>${label(state.action)}</b> above to take your photo.`, 'info');
@@ -457,7 +473,15 @@ async function openLiveCamera() {
 }
 $('btnShutter').onclick = () => {
   const v = $('liveVideo');
-  if (!v.videoWidth) { msg('clockMsg', 'Camera is still starting — try again in a second.', 'info'); return; }
+  console.log('[Shutter] videoWidth:', v.videoWidth, 'videoHeight:', v.videoHeight);
+  if (!v.videoWidth || !v.videoHeight) {
+    msg('clockMsg', 'Camera is still loading... try again in a moment.', 'info');
+    return;
+  }
+  if (v.videoWidth < 100) {
+    msg('clockMsg', 'Camera may not be ready (dark image). Try waiting 2 seconds, then tap Take photo again.', 'info');
+    return;
+  }
   stampAndPreview(v, v.videoWidth, v.videoHeight);
   stopLiveCamera();
 };
