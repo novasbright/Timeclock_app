@@ -140,10 +140,10 @@
 <script>
 /* ============ OPTIONAL: fill these in so every device works with no setup ============ */
 const CONFIG = {
-  supabaseUrl: '',
-  supabaseKey: '',
-  employeeName: '',
-  employerName: ''
+  supabaseUrl: 'https://tlfuulovtntepzpyuvqu.supabase.co',
+  supabaseKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRsZnV1bG92dG50ZXB6cHl1dnF1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTA0MjAyNjksImV4cCI6MjEwNTk5NjI2OX0.Iq8E4_Kh8hp0G0S0voSGNigJxakToR7RnZ7ay4u9J4A',
+  employeeName: 'Yujin Ko',
+  employerName: 'SK Dental Lab (GENIE TRADING AUSTRALIA PTY LTD ABN: 55 636 542 142)'
 };
 /* ==================================================================================== */
 
@@ -164,7 +164,8 @@ function isConfigured() { const c = cfg(); return c.supabaseUrl && c.supabaseKey
 
 async function api(path, opts = {}) {
   const c = cfg();
-  const res = await fetch(c.supabaseUrl.replace(/\/+$/, '') + path, {
+  const base = c.supabaseUrl.trim().replace(/\/+$/, '').replace(/\/(rest|storage)\/v1$/, '');
+  const res = await fetch(base + path, {
     ...opts,
     headers: { apikey: c.supabaseKey, Authorization: 'Bearer ' + c.supabaseKey, ...(opts.headers || {}) }
   });
