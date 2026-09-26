@@ -207,6 +207,16 @@ function baseUrl() { return (cfg().supabaseUrl || '').trim().replace(/\/+$/, '')
 /* ---------- sign-in (Supabase Auth; the session is kept on this device) ---------- */
 const IS_RECOVERY_LINK = /type=recovery/.test(location.hash);
 let _sb = null, _sbFor = '';
+function isPrivateMode() {
+  try {
+    const test = 'tc_test_' + Date.now();
+    localStorage.setItem(test, 'x');
+    localStorage.removeItem(test);
+    return false;  // localStorage works, not private mode
+  } catch (e) {
+    return true;  // localStorage failed, likely private mode
+  }
+}
 function sbClient() {
   const c = cfg(), key = baseUrl() + '|' + c.supabaseKey;
   if (!_sb || _sbFor !== key) {
@@ -214,6 +224,7 @@ function sbClient() {
       persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, storageKey: 'tc_auth' } });
     _sbFor = key;
     _sb.auth.onAuthStateChange((event, session) => {
+      console.log('[Auth]', event, session ? 'session exists' : 'no session');
       if (event === 'PASSWORD_RECOVERY') showAuth('recovery');
       else if (event === 'SIGNED_OUT') showAuth();
       else if (event === 'SIGNED_IN' && session && !IS_RECOVERY_LINK && $('appMain').classList.contains('hidden')) showApp();
@@ -223,6 +234,7 @@ function sbClient() {
 }
 async function currentSession() {
   const { data } = await sbClient().auth.getSession();
+  console.log('[Session]', data.session ? `restored: ${data.session.user.email}` : 'none');
   return data.session;
 }
 function showAuth(mode) {
@@ -232,14 +244,22 @@ function showAuth(mode) {
   $('authForm').classList.toggle('hidden', rec); $('newPassForm').classList.toggle('hidden', !rec);
   $('authTitle').textContent = rec ? 'Choose a new password' : 'Sign in';
   $('authIntro').classList.toggle('hidden', rec);
+  if (!rec && isPrivateMode()) {
+    const p = document.createElement('p');
+    p.className = 'msg bad';
+    p.innerHTML = '<b>⚠ Private browsing:</b> Your sign-in won\'t be saved. Turn off private mode in Safari settings, then try again.';
+    $('authMsg').parentElement.insertBefore(p, $('authMsg').nextSibling);
+  }
 }
 async function showApp() {
+  console.log('[App] Showing app…');
   $('authScreen').classList.add('hidden');
   $('appNav').classList.remove('hidden'); $('appMain').classList.remove('hidden');
   if (location.hash.includes('access_token')) history.replaceState(null, '', location.pathname + location.search);
   const s = await currentSession(); $('acctEmail').textContent = s && s.user ? s.user.email : '—';
   showTab(isConfigured() ? 'clock' : 'setup');
   autoClockFromQr();
+  console.log('[App] Ready');
 }
 /* Opened from the QR code (?clock=1): go straight to the camera.
    Before 12pm on the phone's clock → Clock In, from 12pm → Clock Out. */
@@ -372,6 +392,7 @@ async function refreshStatus() {
   $('headerName').textContent = c.employeeName ? `${c.employeeName}${c.employerName ? ' · ' + c.employerName : ''}` : 'Photo-verified attendance records';
   if (!isConfigured()) { $('currentStatus').textContent = 'Not set up yet — open the Setup tab.'; return; }
   try {
+    console.log('[Status] Fetching records for', c.employeeName);
     const q = `/rest/v1/time_records?select=*&employee_name=eq.${encodeURIComponent(c.employeeName)}&order=recorded_at.desc&limit=1`;
     const [last] = await (await api(q)).json();
     state.lastRecord = last || null;
@@ -382,7 +403,11 @@ async function refreshStatus() {
         ? `<b>Clocked in</b> since ${s.hm} on ${s.wd} ${s.dmy}`
         : `<b>Clocked out</b> at ${s.hm} on ${s.wd} ${s.dmy}`;
     }
-  } catch (e) { $('currentStatus').textContent = 'Could not reach the database. Check your internet.'; }
+    console.log('[Status] Loaded OK');
+  } catch (e) {
+    console.log('[Status] Error:', e.message);
+    $('currentStatus').textContent = 'Could not reach the database. Check your internet.';
+  }
 }
 
 function startClock(action) {
