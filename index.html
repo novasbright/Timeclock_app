@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Time Clock</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+  :root { --ink:#1f2937; --muted:#6b7280; --line:#e5e7eb; --bg:#f4f5f7; --card:#fff;
+          --accent:#1e3a5f; --in:#0f766e; --out:#b45309; --err:#b91c1c; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; background:var(--bg); color:var(--ink); }
+  header { background:var(--accent); color:#fff; padding:18px 16px; }
+  header h1 { font-size:20px; } header p { font-size:13px; opacity:.8; margin-top:2px; }
+  nav { display:flex; background:var(--card); border-bottom:1px solid var(--line); position:sticky; top:0; z-index:5; }
+  nav button { flex:1; padding:14px 4px; border:0; background:none; font-size:14px; font-weight:600; color:var(--muted); border-bottom:3px solid transparent; }
+  nav button.active { color:var(--accent); border-bottom-color:var(--accent); }
+  main { max-width:720px; margin:0 auto; padding:16px; }
+  .tab { display:none; } .tab.active { display:block; }
+  .card { background:var(--card); border-radius:12px; padding:16px; margin-bottom:14px; border:1px solid var(--line); }
+  h2 { font-size:16px; margin-bottom:10px; }
+  label { display:block; font-size:13px; font-weight:600; margin:10px 0 4px; }
+  input { width:100%; padding:11px; border:1px solid var(--line); border-radius:8px; font-size:16px; background:#fff; }
+  .row { display:flex; gap:10px; } .row > * { flex:1; min-width:0; }
+  button.btn { width:100%; padding:14px; border:0; border-radius:10px; font-size:16px; font-weight:700; color:#fff; background:var(--accent); margin-top:10px; }
+  button.btn:disabled { opacity:.5; }
+  .btn.in { background:var(--in); } .btn.out { background:var(--out); } .btn.ghost { background:#fff; color:var(--ink); border:1px solid var(--line); }
+  .big { font-size:20px; padding:22px; }
+  .status { padding:14px; border-radius:10px; background:#eef2f7; font-size:15px; text-align:center; }
+  .msg { padding:12px; border-radius:8px; margin-top:10px; font-size:14px; }
+  .msg.ok { background:#ecfdf5; color:#065f46; } .msg.bad { background:#fef2f2; color:var(--err); } .msg.info { background:#eff6ff; color:#1e40af; }
+  #preview { width:100%; border-radius:10px; margin-top:6px; }
+  table { width:100%; border-collapse:collapse; font-size:14px; }
+  th, td { text-align:left; padding:9px 6px; border-bottom:1px solid var(--line); }
+  th { font-size:12px; color:var(--muted); text-transform:uppercase; }
+  .pill { font-size:12px; font-weight:700; padding:3px 8px; border-radius:20px; color:#fff; }
+  .pill.clock_in { background:var(--in); } .pill.clock_out { background:var(--out); }
+  .linkbtn { border:0; background:none; color:var(--accent); font-weight:600; font-size:14px; text-decoration:underline; }
+  .small { font-size:13px; color:var(--muted); line-height:1.5; }
+  #qr { display:flex; justify-content:center; padding:12px; background:#fff; }
+  .hidden { display:none !important; }
+  #modal { position:fixed; inset:0; background:rgba(0,0,0,.7); display:flex; align-items:center; justify-content:center; padding:16px; z-index:20; }
+  #modal img { max-width:100%; max-height:85vh; border-radius:10px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Time Clock</h1>
+  <p id="headerName">Photo-verified attendance records</p>
+</header>
+<nav>
+  <button data-tab="clock" class="active">Clock</button>
+  <button data-tab="records">Records</button>
+  <button data-tab="reports">Reports</button>
+  <button data-tab="setup">Setup</button>
+</nav>
+
+<main>
+  <!-- CLOCK -->
+  <section id="clock" class="tab active">
+    <div class="card">
+      <div class="status" id="currentStatus">Loading status…</div>
+      <button class="btn in big" id="btnIn">Clock In</button>
+      <button class="btn out big" id="btnOut">Clock Out</button>
+      <input type="file" id="cameraInput" accept="image/*" capture="user" class="hidden">
+      <div id="clockMsg"></div>
+    </div>
+    <div class="card hidden" id="approveCard">
+      <h2 id="approveTitle">Check your photo</h2>
+      <img id="preview" alt="Photo preview">
+      <button class="btn in" id="btnApprove">Approve &amp; Save</button>
+      <button class="btn ghost" id="btnRetake">Retake Photo</button>
+    </div>
+  </section>
+
+  <!-- RECORDS -->
+  <section id="records" class="tab">
+    <div class="card">
+      <div class="row">
+        <div><label>From</label><input type="date" id="recFrom"></div>
+        <div><label>To</label><input type="date" id="recTo"></div>
+      </div>
+      <button class="btn" id="btnLoadRecords">Show Records</button>
+      <div id="recMsg"></div>
+    </div>
+    <div class="card"><div id="recordsList" class="small">Choose dates and tap Show Records.</div></div>
+  </section>
+
+  <!-- REPORTS -->
+  <section id="reports" class="tab">
+    <div class="card">
+      <h2>Report period</h2>
+      <div class="row">
+        <div><label>From</label><input type="date" id="repFrom"></div>
+        <div><label>To</label><input type="date" id="repTo"></div>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button class="btn ghost" data-range="week">This week</button>
+        <button class="btn ghost" data-range="lastweek">Last week</button>
+        <button class="btn ghost" data-range="month">This month</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Download</h2>
+      <button class="btn" id="btnPdf">Timesheet (PDF) — for printing</button>
+      <button class="btn" id="btnCsv">Raw Data (CSV) — every tap, exact times</button>
+      <button class="btn ghost" id="btnZip">Full record pack (ZIP) — PDF + CSV + all photos</button>
+      <div id="repMsg"></div>
+      <p class="small" style="margin-top:12px">All times are Sydney time (AEST/AEDT). Clock-in/out times come from the database server clock, not the phone, so they can't be changed by adjusting the phone's time.</p>
+    </div>
+  </section>
+
+  <!-- SETUP -->
+  <section id="setup" class="tab">
+    <div class="card">
+      <h2>Connection</h2>
+      <label>Supabase Project URL</label><input id="cfgUrl" placeholder="https://xxxxx.supabase.co" autocapitalize="off">
+      <label>Supabase anon (public) key</label><input id="cfgKey" type="password" autocapitalize="off">
+      <label>Employee name</label><input id="cfgName" placeholder="Full name">
+      <label>Employer / business name</label><input id="cfgEmployer" placeholder="Shown on the timesheet">
+      <button class="btn" id="btnSave">Save &amp; Test Connection</button>
+      <div id="setupMsg"></div>
+    </div>
+    <div class="card">
+      <h2>QR code for the workplace</h2>
+      <p class="small">Print this and stick it where she starts work. Scanning it with the iPhone camera opens this app on the Clock screen. (Only works once the app is hosted at a web address, not opened as a file.)</p>
+      <div id="qr"></div>
+      <p class="small" id="qrUrl" style="word-break:break-all;text-align:center"></p>
+      <button class="btn ghost" id="btnPrintQr">Print QR code</button>
+    </div>
+  </section>
+</main>
+
+<div id="modal" class="hidden"><img id="modalImg" alt="Clock photo"></div>
+
+<script>
+/* ============ OPTIONAL: fill these in so every device works with no setup ============ */
+const CONFIG = {
+  supabaseUrl: '',
+  supabaseKey: '',
+  employeeName: '',
+  employerName: ''
+};
+/* ==================================================================================== */
+
+const TZ = 'Australia/Sydney';
+const BUCKET = 'timeclock-photos';
+const state = { action: null, blob: null, lastRecord: null };
+const $ = id => document.getElementById(id);
+
+/* ---------- config ---------- */
+function cfg() {
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem('tc_config') || '{}'); } catch (e) {}
+  const merged = { ...saved };
+  for (const [k, v] of Object.entries(CONFIG)) if (v) merged[k] = v;
+  return merged;
+}
+function isConfigured() { const c = cfg(); return c.supabaseUrl && c.supabaseKey && c.employeeName; }
+
+async function api(path, opts = {}) {
+  const c = cfg();
+  const res = await fetch(c.supabaseUrl.replace(/\/+$/, '') + path, {
+    ...opts,
+    headers: { apikey: c.supabaseKey, Authorization: 'Bearer ' + c.supabaseKey, ...(opts.headers || {}) }
+  });
+  if (!res.ok) {
+    let t = ''; try { t = await res.text(); } catch (e) {}
+    throw new Error(`Server said ${res.status}${t ? ': ' + t.slice(0, 200) : ''}`);
+  }
+  return res;
+}
+
+/* ---------- Sydney time helpers ---------- */
+const fmt = new Intl.DateTimeFormat('en-AU', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, weekday: 'short' });
+function syd(d) {
+  const p = Object.fromEntries(fmt.formatToParts(new Date(d)).map(x => [x.type, x.value]));
+  if (p.hour === '24') p.hour = '00';
+  return { date: `${p.year}-${p.month}-${p.day}`, dmy: `${p.day}/${p.month}/${p.year}`,
+           time: `${p.hour}:${p.minute}:${p.second}`, hm: `${p.hour}:${p.minute}`, wd: p.weekday };
+}
+function todaySyd() { return syd(new Date()).date; }
+function addDays(ymd, n) { const d = new Date(ymd + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); }
+function weekdayIndex(ymd) { return (new Date(ymd + 'T12:00:00Z').getUTCDay() + 6) % 7; } // Mon=0
+function fmtHours(h) { if (h == null) return '—'; const m = Math.round(h * 60); return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m`; }
+function label(a) { return a === 'clock_in' ? 'Clock In' : 'Clock Out'; }
+
+/* ---------- messages ---------- */
+function msg(id, text, kind = 'info') { $(id).innerHTML = text ? `<div class="msg ${kind}">${text}</div>` : ''; }
+
+/* ---------- tabs ---------- */
+document.querySelectorAll('nav button').forEach(b => b.addEventListener('click', () => showTab(b.dataset.tab)));
+function showTab(name) {
+  document.querySelectorAll('nav button').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.id === name));
+  if (name === 'clock') refreshStatus();
+  if (name === 'setup') renderQr();
+}
+
+/* ---------- data ---------- */
+async function fetchRecords(from, to) {
+  const c = cfg();
+  const start = addDays(from, -1) + 'T00:00:00Z', end = addDays(to, 2) + 'T00:00:00Z';
+  const q = `/rest/v1/time_records?select=*&employee_name=eq.${encodeURIComponent(c.employeeName)}` +
+            `&recorded_at=gte.${start}&recorded_at=lt.${end}&order=recorded_at.asc&limit=10000`;
+  const rows = await (await api(q)).json();
+  return rows.filter(r => { const d = syd(r.recorded_at).date; return d >= from && d <= to; });
+}
+async function fetchPhoto(path) {
+  const res = await api(`/storage/v1/object/authenticated/${BUCKET}/${path.split('/').map(encodeURIComponent).join('/')}`);
+  return res.blob();
+}
+function buildShifts(recs) {
+  const shifts = []; let open = null;
+  for (const r of recs) {
+    if (r.action === 'clock_in') {
+      if (open) shifts.push({ in: open, out: null, note: 'No clock-out recorded' });
+      open = r;
+    } else if (open) { shifts.push({ in: open, out: r }); open = null; }
+    else shifts.push({ in: null, out: r, note: 'No clock-in recorded' });
+  }
+  if (open) shifts.push({ in: open, out: null, note: 'No clock-out recorded yet' });
+  return shifts.map(s => ({ ...s,
+    hours: s.in && s.out ? (new Date(s.out.recorded_at) - new Date(s.in.recorded_at)) / 3600000 : null }));
+}
+
+/* ---------- clock screen ---------- */
+async function refreshStatus() {
+  const c = cfg();
+  $('headerName').textContent = c.employeeName ? `${c.employeeName}${c.employerName ? ' · ' + c.employerName : ''}` : 'Photo-verified attendance records';
+  if (!isConfigured()) { $('currentStatus').textContent = 'Not set up yet — open the Setup tab.'; return; }
+  try {
+    const q = `/rest/v1/time_records?select=*&employee_name=eq.${encodeURIComponent(c.employeeName)}&order=recorded_at.desc&limit=1`;
+    const [last] = await (await api(q)).json();
+    state.lastRecord = last || null;
+    if (!last) $('currentStatus').textContent = 'No records yet. Tap Clock In to start.';
+    else {
+      const s = syd(last.recorded_at);
+      $('currentStatus').innerHTML = last.action === 'clock_in'
+        ? `<b>Clocked in</b> since ${s.hm} on ${s.wd} ${s.dmy}`
+        : `<b>Clocked out</b> at ${s.hm} on ${s.wd} ${s.dmy}`;
+    }
+  } catch (e) { $('currentStatus').textContent = 'Could not reach the database. Check your internet.'; }
+}
+
+function startClock(action) {
+  if (!isConfigured()) { msg('clockMsg', 'Please complete the Setup tab first.', 'bad'); return; }
+  if (state.lastRecord && state.lastRecord.action === action &&
+      !confirm(`The last record is already "${label(action)}". Record another ${label(action)} anyway?`)) return;
+  state.action = action;
+  msg('clockMsg', '');
+  $('cameraInput').value = '';
+  $('cameraInput').click();
+}
+$('btnIn').onclick = () => startClock('clock_in');
+$('btnOut').onclick = () => startClock('clock_out');
+$('btnRetake').onclick = () => { $('cameraInput').value = ''; $('cameraInput').click(); };
+
+$('cameraInput').addEventListener('change', async e => {
+  const file = e.target.files[0]; if (!file) return;
+  const img = new Image();
+  img.src = URL.createObjectURL(file);
+  await img.decode();
+  const scale = Math.min(1, 1280 / Math.max(img.naturalWidth, img.naturalHeight));
+  const w = Math.round(img.naturalWidth * scale), h = Math.round(img.naturalHeight * scale);
+  const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+  const ctx = cv.getContext('2d'); ctx.drawImage(img, 0, 0, w, h);
+  // timestamp stamp on the photo
+  const s = syd(new Date()), c = cfg();
+  const fs = Math.max(16, Math.round(w / 32));
+  ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(0, h - fs * 2.6, w, fs * 2.6);
+  ctx.fillStyle = '#fff'; ctx.font = `bold ${fs}px -apple-system, sans-serif`;
+  ctx.fillText(`${label(state.action).toUpperCase()} · ${c.employeeName}`, fs * 0.6, h - fs * 1.45);
+  ctx.font = `${Math.round(fs * 0.85)}px -apple-system, sans-serif`;
+  ctx.fillText(`${s.wd} ${s.dmy} ${s.time} (Sydney)`, fs * 0.6, h - fs * 0.45);
+  cv.toBlob(b => {
+    state.blob = b;
+    $('preview').src = URL.createObjectURL(b);
+    $('approveTitle').textContent = `Check your photo — ${label(state.action)}`;
+    $('approveCard').classList.remove('hidden');
+    $('approveCard').scrollIntoView({ behavior: 'smooth' });
+  }, 'image/jpeg', 0.8);
+});
+
+$('btnApprove').onclick = async () => {
+  if (!state.blob) return;
+  const btn = $('btnApprove'); btn.disabled = true; btn.textContent = 'Saving…';
+  try {
+    const c = cfg(), s = syd(new Date());
+    const path = `${s.date.slice(0, 7)}/${s.date}_${s.time.replace(/:/g, '')}_${state.action}_${Math.random().toString(36).slice(2, 7)}.jpg`;
+    await api(`/storage/v1/object/${BUCKET}/${path}`, { method: 'POST',
+      headers: { 'Content-Type': 'image/jpeg', 'x-upsert': 'false' }, body: state.blob });
+    const res = await api('/rest/v1/time_records', { method: 'POST',
+      headers: { 'Content-Type': 'application/json', Prefer: 'return=representation' },
+      body: JSON.stringify({ employee_name: c.employeeName, action: state.action, photo_path: path,
+                             device_info: navigator.userAgent.slice(0, 200) }) });
+    const [rec] = await res.json();
+    const t = syd(rec.recorded_at);
+    msg('clockMsg', `✓ <b>${label(rec.action)}</b> saved at ${t.hm} on ${t.wd} ${t.dmy}. Record #${rec.id}.`, 'ok');
+    $('approveCard').classList.add('hidden'); state.blob = null;
+    refreshStatus();
+  } catch (e) {
+    msg('clockMsg', 'Not saved — ' + e.message + '. Please try again.', 'bad');
+  } finally { btn.disabled = false; btn.textContent = 'Approve & Save'; }
+};
+
+/* ---------- records screen ---------- */
+$('btnLoadRecords').onclick = async () => {
+  if (!isConfigured()) { msg('recMsg', 'Complete Setup first.', 'bad'); return; }
+  msg('recMsg', 'Loading…');
+  try {
+    const recs = await fetchRecords($('recFrom').value, $('recTo').value);
+    msg('recMsg', '');
+    if (!recs.length) { $('recordsList').textContent = 'No records in this period.'; return; }
+    $('recordsList').innerHTML = `<table><thead><tr><th>Date</th><th>Time</th><th>Action</th><th>Photo</th></tr></thead><tbody>` +
+      recs.slice().reverse().map(r => { const s = syd(r.recorded_at);
+        return `<tr><td>${s.wd} ${s.dmy}</td><td>${s.time}</td><td><span class="pill ${r.action}">${label(r.action)}</span></td>
+          <td>${r.photo_path ? `<button class="linkbtn" data-photo="${r.photo_path}">View</button>` : '—'}</td></tr>`; }).join('') +
+      `</tbody></table>`;
+  } catch (e) { msg('recMsg', e.message, 'bad'); }
+};
+$('recordsList').addEventListener('click', async e => {
+  const p = e.target.dataset.photo; if (!p) return;
+  e.target.textContent = '…';
+  try { $('modalImg').src = URL.createObjectURL(await fetchPhoto(p)); $('modal').classList.remove('hidden'); }
+  catch (err) { alert('Could not load photo: ' + err.message); }
+  e.target.textContent = 'View';
+});
+$('modal').onclick = () => $('modal').classList.add('hidden');
+
+/* ---------- reports ---------- */
+function setRange(kind) {
+  const t = todaySyd(); let from = t, to = t;
+  if (kind === 'week') { from = addDays(t, -weekdayIndex(t)); to = addDays(from, 6); }
+  if (kind === 'lastweek') { from = addDays(t, -weekdayIndex(t) - 7); to = addDays(from, 6); }
+  if (kind === 'month') { from = t.slice(0, 8) + '01'; to = addDays(addDays(from, 32).slice(0, 8) + '01', -1); }
+  $('repFrom').value = from; $('repTo').value = to;
+}
+document.querySelectorAll('[data-range]').forEach(b => b.onclick = () => setRange(b.dataset.range));
+
+async function loadReportData() {
+  if (!isConfigured()) throw new Error('Complete Setup first');
+  const from = $('repFrom').value, to = $('repTo').value;
+  if (!from || !to || from > to) throw new Error('Choose a valid date range');
+  const recs = await fetchRecords(from, to);
+  return { from, to, recs, shifts: buildShifts(recs) };
+}
+function fileBase(from, to) { return `${cfg().employeeName.replace(/[^\w]+/g, '_')}_${from}_to_${to}`; }
+
+function makePdf({ from, to, shifts }) {
+  const c = cfg(); const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  doc.setFontSize(18); doc.text('Employee Timesheet', 14, 18);
+  doc.setFontSize(10); doc.setTextColor(60);
+  const f = syd(from + 'T02:00:00Z'), t = syd(to + 'T02:00:00Z'), g = syd(new Date());
+  const info = [['Employee', c.employeeName], ['Employer', c.employerName || '—'],
+                ['Period', `${f.dmy} to ${t.dmy}`], ['Time zone', 'Australia/Sydney (AEST/AEDT)'],
+                ['Generated', `${g.dmy} ${g.hm}`]];
+  info.forEach(([k, v], i) => { doc.setFont(undefined, 'bold'); doc.text(k + ':', 14, 28 + i * 5.5);
+                                 doc.setFont(undefined, 'normal'); doc.text(String(v), 42, 28 + i * 5.5); });
+  let total = 0;
+  const body = shifts.map(s => {
+    const base = s.in || s.out, d = syd(base.recorded_at);
+    if (s.hours != null) total += s.hours;
+    return [d.dmy, d.wd, s.in ? syd(s.in.recorded_at).hm : '—', s.out ? syd(s.out.recorded_at).hm : '—',
+            s.hours != null ? s.hours.toFixed(2) : '—', s.hours != null ? fmtHours(s.hours) : '', s.note || ''];
+  });
+  if (!body.length) body.push(['', '', '', '', '', '', 'No records in this period']);
+  doc.autoTable({
+    startY: 58, theme: 'grid',
+    head: [['Date', 'Day', 'Clock in', 'Clock out', 'Hours', '(h:m)', 'Notes']],
+    body, foot: [['', '', '', 'Total', total.toFixed(2), fmtHours(total), '']],
+    showFoot: 'lastPage', styles: { fontSize: 9, cellPadding: 2.2 },
+    headStyles: { fillColor: [30, 58, 95] }, footStyles: { fillColor: [235, 238, 243], textColor: 20, fontStyle: 'bold' }
+  });
+  let y = doc.lastAutoTable.finalY + 10;
+  if (y > 250) { doc.addPage(); y = 25; }
+  doc.setFontSize(8.5); doc.setTextColor(90);
+  doc.text('Times are recorded by the database server when each photo-verified clock-in/out is saved. Photo evidence and the', 14, y);
+  doc.text('full record list are available in the accompanying CSV file / record pack. Unpaid breaks are not deducted automatically.', 14, y + 4);
+  y += 20; doc.setFontSize(10); doc.setTextColor(20);
+  doc.line(14, y, 90, y); doc.line(115, y, 191, y);
+  doc.text('Employee signature / date', 14, y + 5); doc.text('Employer signature / date', 115, y + 5);
+  const pages = doc.getNumberOfPages();
+  for (let i = 1; i <= pages; i++) { doc.setPage(i); doc.setFontSize(8); doc.setTextColor(120);
+    doc.text(`Page ${i} of ${pages}`, 196, 290, { align: 'right' }); }
+  return doc;
+}
+
+function makeCsv({ recs }) {
+  const esc = v => { v = v == null ? '' : String(v); return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v; };
+  const header = ['Record ID', 'Employee', 'Action', 'Date (Sydney)', 'Day', 'Time (Sydney)', 'Timestamp (UTC)', 'Photo file'];
+  const rows = recs.map(r => { const s = syd(r.recorded_at);
+    return [r.id, r.employee_name, label(r.action), s.dmy, s.wd, s.time, new Date(r.recorded_at).toISOString(),
+            r.photo_path ? r.photo_path.split('/').pop() : '']; });
+  return '\ufeff' + [header, ...rows].map(r => r.map(esc).join(',')).join('\r\n');
+}
+
+function download(blob, name) {
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+}
+
+async function runReport(btn, work) {
+  const old = btn.textContent; btn.disabled = true; btn.textContent = 'Preparing…'; msg('repMsg', '');
+  try { await work(); } catch (e) { msg('repMsg', e.message, 'bad'); }
+  finally { btn.disabled = false; btn.textContent = old; }
+}
+$('btnPdf').onclick = e => runReport(e.target, async () => {
+  const d = await loadReportData(); makePdf(d).save(`Timesheet_${fileBase(d.from, d.to)}.pdf`);
+});
+$('btnCsv').onclick = e => runReport(e.target, async () => {
+  const d = await loadReportData();
+  download(new Blob([makeCsv(d)], { type: 'text/csv;charset=utf-8' }), `RawData_${fileBase(d.from, d.to)}.csv`);
+});
+$('btnZip').onclick = e => runReport(e.target, async () => {
+  const d = await loadReportData(); const zip = new JSZip(); const base = fileBase(d.from, d.to);
+  zip.file(`Timesheet_${base}.pdf`, makePdf(d).output('blob'));
+  zip.file(`RawData_${base}.csv`, makeCsv(d));
+  const photos = zip.folder('photos'); let n = 0;
+  for (const r of d.recs) {
+    if (!r.photo_path) continue;
+    e.target.textContent = `Adding photos… ${++n}`;
+    try { photos.file(r.photo_path.split('/').pop(), await fetchPhoto(r.photo_path)); }
+    catch (err) { photos.file(r.photo_path.split('/').pop() + '.MISSING.txt', 'Could not download: ' + err.message); }
+  }
+  download(await zip.generateAsync({ type: 'blob' }), `RecordPack_${base}.zip`);
+});
+
+/* ---------- setup ---------- */
+function loadSetupForm() {
+  const c = cfg();
+  $('cfgUrl').value = c.supabaseUrl || ''; $('cfgKey').value = c.supabaseKey || '';
+  $('cfgName').value = c.employeeName || ''; $('cfgEmployer').value = c.employerName || '';
+}
+$('btnSave').onclick = async () => {
+  const c = { supabaseUrl: $('cfgUrl').value.trim(), supabaseKey: $('cfgKey').value.trim(),
+              employeeName: $('cfgName').value.trim(), employerName: $('cfgEmployer').value.trim() };
+  if (!c.supabaseUrl || !c.supabaseKey || !c.employeeName) { msg('setupMsg', 'URL, key and employee name are required.', 'bad'); return; }
+  try { localStorage.setItem('tc_config', JSON.stringify(c)); } catch (e) {}
+  msg('setupMsg', 'Testing…');
+  try { await api('/rest/v1/time_records?select=id&limit=1'); msg('setupMsg', '✓ Saved and connected to the database.', 'ok'); refreshStatus(); }
+  catch (e) { msg('setupMsg', 'Saved, but the connection test failed: ' + e.message, 'bad'); }
+};
+function appUrl() { return location.href.split('?')[0].split('#')[0] + '?clock=1'; }
+function renderQr() {
+  $('qr').innerHTML = '';
+  new QRCode($('qr'), { text: appUrl(), width: 220, height: 220 });
+  $('qrUrl').textContent = appUrl();
+}
+$('btnPrintQr').onclick = () => {
+  const img = $('qr').querySelector('img') || $('qr').querySelector('canvas');
+  const src = img.tagName === 'IMG' ? img.src : img.toDataURL();
+  const w = window.open('');
+  w.document.write(`<div style="text-align:center;font-family:sans-serif;margin-top:60px"><h1>Scan to Clock In / Out</h1>
+    <img src="${src}" style="width:320px;height:320px"><p>${cfg().employerName || ''}</p></div>`);
+  w.document.close(); setTimeout(() => w.print(), 400);
+};
+
+/* ---------- start ---------- */
+loadSetupForm();
+setRange('month');
+const t0 = todaySyd(); $('recFrom').value = addDays(t0, -6); $('recTo').value = t0;
+if (!isConfigured()) showTab('setup'); else showTab('clock');
+</script>
+</body>
+</html>
